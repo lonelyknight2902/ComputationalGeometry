@@ -156,6 +156,43 @@ function grahamScan(points: Point[]): Point[] {
 	return lower.concat(upper);
 }
 
+// ─── Graham scan sub-algorithm ───────────────────────────────────────────────
+
+function grahamScanGroup(pts: Point[]): Point[] {
+	if (pts.length <= 2) return pts;
+
+	const sorted = [...pts].sort((a, b) =>
+		a.position.x === b.position.x ? a.position.y - b.position.y : a.position.x - b.position.x
+	);
+
+	const lower: Point[] = [];
+	for (const p of sorted) {
+		while (
+			lower.length >= 2 &&
+			cross(lower[lower.length - 2].position, lower[lower.length - 1].position, p.position) <= 0
+		) {
+			lower.pop();
+		}
+		lower.push(p);
+	}
+
+	const upper: Point[] = [];
+	for (let i = sorted.length - 1; i >= 0; i--) {
+		const p = sorted[i];
+		while (
+			upper.length >= 2 &&
+			cross(upper[upper.length - 2].position, upper[upper.length - 1].position, p.position) <= 0
+		) {
+			upper.pop();
+		}
+		upper.push(p);
+	}
+
+	upper.pop();
+	lower.pop();
+	return lower.concat(upper);
+}
+
 // ─── Chan's convex hull ───────────────────────────────────────────────────────
 
 export function chansConvexHull(inputPoints: Point[]): AlgorithmState[] {
@@ -198,6 +235,380 @@ export function chansConvexHull(inputPoints: Point[]): AlgorithmState[] {
 		});
 		return states;
 	}
+
+	// ── Overview ──────────────────────────────────────────────────────────────
+	states.push({
+		points: defaultPoints,
+		description:
+			section('Chan\'s Convex Hull', `Running on ${mono(String(n))} points.`) +
+			section(
+				'Strategy',
+				`<ol style="margin:0;padding-left:1.2em;line-height:1.8">` +
+					`<li>Partition points into ${mono('k')} groups (roughly √n).</li>` +
+					`<li>Compute convex hull for each group via Graham Scan.</li>` +
+					`<li>Merge mini-hulls via Jarvis March on hull vertices only.</li>` +
+					`</ol>`
+			) +
+			section('Complexity', row('Time', 'O(n log h)') + row('Advantage', 'Output-sensitive: h = hull size'))
+	});
+
+	// ── Partition into k groups ───────────────────────────────────────────────
+	const k = Math.max(2, Math.ceil(Math.sqrt(n)));
+	const groupSize = Math.ceil(n / k);
+	const groups: Point[][] = [];
+
+	for (let i = 0; i < k; i++) {
+		groups.push(inputPoints.slice(i * groupSize, (i + 1) * groupSize));
+	}
+
+	states.push({
+		points: (() => {
+			const overrides: Record<string, { color: number; radius: number }> = {};
+			groups.forEach((g, gi) => {
+				g.forEach((p) => {
+					overrides[p.id] = {
+						color: groupColor(gi),
+						radius: R.group
+					};
+				});
+			});
+			return colorPoints(defaultPoints, overrides);
+		})(),
+		description:
+			section(
+				'Step 1 — Partition',
+				`Points divided into ${mono(String(k))} groups (each colored differently).`
+			) +
+			section(
+				'Group sizes',
+				groups
+					.map(
+						(g, gi) =>
+							`${chip(`G${gi + 1}`, groupCss(gi))}: ${mono(String(g.length))} points`
+					)
+					.join(' | ')
+			) +
+			section(
+				'Next',
+				`Compute hull for each group independently using <strong>Graham Scan</strong>.`
+			)
+	});
+
+	// ── Build mini-hulls for each group via Graham Scan ────────────────────────
+	const miniHulls: Point[][] = [];
+
+	for (let gi = 0; gi < groups.length; gi++) {
+		const group = groups[gi];
+		const miniHull = grahamScanGroup(group);
+		miniHulls.push(miniHull);
+
+		const overrides = groupOverrides(groups, miniHulls);
+		states.push({
+			points: colorPoints(defaultPoints, overrides),
+			lines: miniHull.map((p, i) => ({
+				id: `group-${gi}-edge-${i}`,
+				from: p.position,
+				to: miniHull[(i + 1) % miniHull.length].position,
+				color: groupColor(gi),
+				width: 2
+			})),
+			description:
+				section(
+					`Step 2 — Graham Scan: Group ${chip(`G${gi + 1}`, groupCss(gi))}`,
+					`Mini-hull computed (${mono(String(miniHull.length))} vertices from ${mono(String(group.length))} points).`
+				) +
+				section(
+					'Hull vertices',
+					miniHull.map((p) => badge(p.id, groupCss(gi), '#000')).join(' → ')
+				) +
+				section(
+					'Progress',
+					row('Completed', `${gi + 1} / ${k}`) +
+						row('Total mini-hulls', `${miniHulls.length}`)
+				)
+		});
+	}
+
+	// ── Jarvis March (gift wrapping) on mini-hull vertices ───────────────────
+
+	// Find leftmost point among all mini-hull vertices (anchor for wrapping)
+	const leftmost = miniHulls
+		.flat()
+		.reduce((a, b) => (b.position.x < a.position.x ? b : a));
+
+	const finalHull: Point[] = [leftmost];
+
+	states.push({
+		points: (() => {
+			const overrides: Record<string, { color: number; radius: number }> = {};
+			inputPoints.forEach((p) => {
+				overrides[p.id] = { color: C.pointDefault, radius: R.default };
+			});
+			miniHulls.flat().forEach((p) => {
+				overrides[p.id] = { color: C.hullVertex, radius: R.hull };
+			});
+			overrides[leftmost.id] = { color: C.start, radius: R.start };
+			return colorPoints(defaultPoints, overrides);
+		})(),
+		lines: miniHulls.flatMap((hull, gi) =>
+			hull.map((p, i) => ({
+				id: `group-hull-${gi}-edge-${i}`,
+				from: p.position,
+				to: hull[(i + 1) % hull.length].position,
+				color: groupColor(gi),
+				width: 1
+			}))
+		),
+		description:
+			section(
+				'Step 3 — Jarvis March (Gift Wrapping)',
+				`Start from leftmost mini-hull vertex ${badge(leftmost.id, CSS.start)}.`
+			) +
+			section(
+				'Mini-hull vertices only',
+				`Merge now considers only ${mono(String(miniHulls.flat().length))} hull vertices, not all ${mono(String(n))} points.`
+			) +
+			section(
+				'Method',
+				`For each wrapped vertex, find the next vertex via counter-clockwise orientation test.`
+			)
+	});
+
+	let current = leftmost;
+
+	// Wrapping loop: iterate until we return to the start
+	for (let step = 0; step < 1000; step++) {
+		// Find the point with the most counter-clockwise angle from current
+		let nextPoint: Point | null = null;
+
+		// Show each candidate being tested
+		for (const miniHull of miniHulls) {
+			for (const candidate of miniHull) {
+				if (candidate.id === current.id) continue;
+
+				// State BEFORE deciding on this candidate
+				const overrides_test: Record<string, { color: number; radius: number }> = {};
+				inputPoints.forEach((p) => {
+					overrides_test[p.id] = { color: C.pointDefault, radius: R.default };
+				});
+
+				miniHulls.flat().forEach((p) => {
+					const inFinalHull = finalHull.some((fp) => fp.id === p.id);
+					overrides_test[p.id] = {
+						color: inFinalHull ? C.finalHull : C.hullVertex,
+						radius: inFinalHull ? R.final : R.hull
+					};
+				});
+
+				overrides_test[current.id] = { color: C.current, radius: R.current };
+				overrides_test[candidate.id] = { color: C.nextBest, radius: R.next };
+
+				if (nextPoint && nextPoint.id !== candidate.id) {
+					overrides_test[nextPoint.id] = { color: C.hullVertex, radius: R.hull };
+				}
+
+				const o = nextPoint ? cross(current.position, nextPoint.position, candidate.position) : 1;
+				const isReplaced =
+					nextPoint &&
+					(o > 0 ||
+						(o === 0 &&
+							dist2(current.position, candidate.position) >
+								dist2(current.position, nextPoint.position)));
+
+				const isInitial = !nextPoint;
+
+				states.push({
+					points: colorPoints(defaultPoints, overrides_test),
+					lines: [
+						// Group hulls in background
+						...miniHulls.flatMap((hull, gi) =>
+							hull.map((p, i) => ({
+								id: `group-hull-test-${gi}-edge-${i}`,
+								from: p.position,
+								to: hull[(i + 1) % hull.length].position,
+								color: groupColor(gi),
+								width: 1
+							}))
+						),
+						// Final hull so far (only connect adjacent vertices, don't close)
+						...finalHull.slice(0, -1).map((p, i) => ({
+							id: `final-edge-test-${i}`,
+							from: p.position,
+							to: finalHull[i + 1].position,
+							color: C.finalHull,
+							width: 2
+						})),
+						// Test line from current to candidate
+						{
+							id: `test-candidate`,
+							from: current.position,
+							to: candidate.position,
+							color: isReplaced || isInitial ? C.nextBest : C.current,
+							width: 2
+						},
+						// Comparison line if there's already a candidate
+						...(nextPoint && !isInitial
+							? [
+									{
+										id: `test-comparison`,
+										from: current.position,
+										to: nextPoint.position,
+										color: C.hullVertex,
+										width: 1
+									}
+								]
+							: [])
+					],
+					description:
+						section(
+							`🔍 Test candidate ${badge(candidate.id, CSS.nextBest)}`,
+							isInitial
+								? `First candidate found — ${badge(candidate.id, CSS.nextBest)} is the initial choice.`
+								: isReplaced
+									? `${badge(candidate.id, CSS.nextBest)} makes a <strong>more counter-clockwise</strong> angle ` +
+										`than ${badge(nextPoint!.id, CSS.hullVertex)} — it becomes the new best.`
+									: `${badge(candidate.id, CSS.nextBest)} is <strong>clockwise or collinear</strong> with respect to ` +
+										`${badge(nextPoint!.id, CSS.hullVertex)} — kept as is.`
+						) +
+						section(
+							'Cross product',
+							isInitial
+								? `— (first candidate, no comparison yet)`
+								: `${mono(`cross(${current.id}, ${nextPoint!.id}, ${candidate.id}) = ${o.toFixed(0)}`)} ` +
+										`→ ${o > 0 ? '<strong style="color:#ef4444">clockwise</strong>' : o === 0 ? '<strong>collinear</strong>' : '<strong style="color:#22c55e">counter-clockwise</strong>'}`
+						) +
+						section(
+							'Current best',
+							nextPoint ? badge(nextPoint.id, CSS.hullVertex) : '<span style="color:#475569">none</span>'
+						)
+				});
+
+				if (!nextPoint) {
+					nextPoint = candidate;
+				} else {
+					const o_final = cross(current.position, nextPoint.position, candidate.position);
+
+					if (
+						o_final > 0 ||
+						(o_final === 0 &&
+							dist2(current.position, candidate.position) >
+								dist2(current.position, nextPoint.position))
+					) {
+						nextPoint = candidate;
+					}
+				}
+			}
+		}
+
+		if (!nextPoint || nextPoint.id === leftmost.id) {
+			// Hull is complete
+			break;
+		}
+
+		finalHull.push(nextPoint);
+
+		// Final state for this wrapping step
+		const overrides_final: Record<string, { color: number; radius: number }> = {};
+		inputPoints.forEach((p) => {
+			overrides_final[p.id] = { color: C.pointDefault, radius: R.default };
+		});
+
+		miniHulls.flat().forEach((p) => {
+			const inFinalHull = finalHull.some((fp) => fp.id === p.id);
+			overrides_final[p.id] = {
+				color: inFinalHull ? C.finalHull : C.hullVertex,
+				radius: inFinalHull ? R.final : R.hull
+			};
+		});
+
+		states.push({
+			points: colorPoints(defaultPoints, overrides_final),
+			lines: [
+				// Group hulls in background (faded)
+				...miniHulls.flatMap((hull, gi) =>
+					hull.map((p, i) => ({
+						id: `group-hull-confirm-${gi}-edge-${i}`,
+						from: p.position,
+						to: hull[(i + 1) % hull.length].position,
+						color: groupColor(gi),
+						width: 1
+					}))
+				),
+				// Final hull in foreground (only connect adjacent vertices, don't close yet)
+				...finalHull.slice(0, -1).map((p, i) => ({
+					id: `final-edge-confirm-${i}`,
+					from: p.position,
+					to: finalHull[i + 1].position,
+					color: C.finalHull,
+					width: 2
+				}))
+			],
+			description:
+				section(
+					`✅ Wrap confirmed — Add ${badge(nextPoint.id, CSS.finalHull, '#000')}`,
+					`${badge(nextPoint.id, CSS.finalHull, '#000')} was the most counter-clockwise from ${badge(current.id, CSS.current)}.`
+				) +
+				section(
+					'Final hull progress',
+					finalHull.map((p) => badge(p.id, CSS.finalHull, '#000')).join(' → ')
+				) +
+				section('Vertices', row('On hull', String(finalHull.length)))
+		});
+
+		current = nextPoint;
+	}
+
+	// ── Final result ──────────────────────────────────────────────────────────
+
+	const finalOverrides: Record<string, { color: number; radius: number }> = {};
+	inputPoints.forEach((p) => {
+		finalOverrides[p.id] = { color: C.pointDefault, radius: R.default };
+	});
+	finalHull.forEach((p) => {
+		finalOverrides[p.id] = { color: C.finalHull, radius: R.final };
+	});
+
+	states.push({
+		points: colorPoints(defaultPoints, finalOverrides),
+		lines: [
+			// Group hulls in background (faded)
+			...miniHulls.flatMap((hull, gi) =>
+				hull.map((p, i) => ({
+					id: `group-hull-final-${gi}-edge-${i}`,
+					from: p.position,
+					to: hull[(i + 1) % hull.length].position,
+					color: groupColor(gi),
+					width: 1
+				}))
+			),
+			// Final hull in foreground (bold)
+			...finalHull.map((p, i) => ({
+				id: `final-complete-${i}`,
+				from: p.position,
+				to: finalHull[(i + 1) % finalHull.length].position,
+				color: C.finalHull,
+				width: 3
+			}))
+		],
+		description:
+			section(
+				'✅ Chan\'s Algorithm Complete',
+				`${k} mini-hulls merged via Jarvis March on ${miniHulls.flat().length} vertices.`
+			) +
+			section(
+				'Result',
+				row('Hull vertices (h)', String(finalHull.length)) +
+					row('Input points (n)', String(n)) +
+					row('Eliminated', String(n - finalHull.length)) +
+					row('Complexity', 'O(n log h)')
+			) +
+			section(
+				'Hull vertices',
+				finalHull
+					.map((p) => badge(p.id, CSS.finalHull, '#000'))
+					.join(' <span style="color:#475569">→</span> ')
+			)
+	});
 
 	return states;
 }
