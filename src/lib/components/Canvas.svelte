@@ -4,9 +4,25 @@
   import { Renderer } from '$lib/renderer/Renderer';
   import type { Point, AlgorithmState } from '$lib/types';
   import ControlBar from './ControlBar.svelte';
+  import PointSetPanel from './PointSetPanel.svelte';
   import { chansConvexHull } from '$lib/algorithms/convex-hull/chansConvexHull';
   import { grahamScanVisualizer } from '$lib/algorithms/convex-hull/grahamScan';
-	import { pushState } from '$app/navigation';
+  import {
+    DEFAULT_POINT_SET_ID,
+    createUserPointSet,
+    deletePointSet,
+    getPointSet,
+    listPointSets,
+    type PointSet
+  } from '$lib/data/pointSets';
+  import {
+    applyCanvasPointEdit,
+    EMPTY_POINTS_JSON,
+    generateRegularPolygonPoints,
+    nextGeneratedSetNumber,
+    serializePointsForEditor,
+    validatePointSetDraft
+  } from '$lib/data/pointSetEditing';
 
   let canvasElement: HTMLCanvasElement;
   let canvasContainer: HTMLDivElement;
@@ -24,55 +40,149 @@
 
   type AlgoId = typeof algorithms[number]['id'];
   let selectedAlgo: AlgoId = 'chan';
+  let availablePointSets: PointSet[] = listPointSets();
+  let selectedPointSetId = DEFAULT_POINT_SET_ID;
   let useBinarySearch = true;
   let skipSearchVisuals = true;
+  let pointPanelCollapsed = false;
+  let editMode = false;
 
-  const testPoints: Point[] = [
-    // Outer hull vertices (roughly octagonal)
-    { id: 'A',  position: { x: 400, y:  60 }, color: 0xffffff, radius: 6 },
-    { id: 'B',  position: { x: 620, y: 100 }, color: 0xffffff, radius: 6 },
-    { id: 'C',  position: { x: 740, y: 260 }, color: 0xffffff, radius: 6 },
-    { id: 'D',  position: { x: 720, y: 440 }, color: 0xffffff, radius: 6 },
-    { id: 'E',  position: { x: 560, y: 540 }, color: 0xffffff, radius: 6 },
-    { id: 'F',  position: { x: 340, y: 560 }, color: 0xffffff, radius: 6 },
-    { id: 'G',  position: { x: 160, y: 460 }, color: 0xffffff, radius: 6 },
-    { id: 'H',  position: { x:  80, y: 280 }, color: 0xffffff, radius: 6 },
-    { id: 'I',  position: { x: 160, y: 110 }, color: 0xffffff, radius: 6 },
+  let editSetId = '';
+  let editSetLabel = '';
+  let newSetPointsJson = EMPTY_POINTS_JSON;
+  let pointSetError = '';
+  let pointSetStatus = '';
+  let editDraftValid: boolean | null = null;
+  const POINT_HIT_PADDING = 2;
 
-    // Collinear points along the top edge (A→B) — stress-test degenerate case
-    { id: 'J',  position: { x: 510, y:  80 }, color: 0xffffff, radius: 6 },
+  $: selectedPointSet = availablePointSets.find((set) => set.id === selectedPointSetId) ?? availablePointSets[0];
 
-    // Dense interior cluster
-    { id: 'K',  position: { x: 380, y: 200 }, color: 0xffffff, radius: 6 },
-    { id: 'L',  position: { x: 420, y: 220 }, color: 0xffffff, radius: 6 },
-    { id: 'M',  position: { x: 400, y: 260 }, color: 0xffffff, radius: 6 },
-    { id: 'N',  position: { x: 360, y: 240 }, color: 0xffffff, radius: 6 },
-    { id: 'O',  position: { x: 440, y: 180 }, color: 0xffffff, radius: 6 },
+  function refreshPointSets() {
+    availablePointSets = listPointSets();
+  }
 
-    // Scattered interior points
-    { id: 'P',  position: { x: 540, y: 300 }, color: 0xffffff, radius: 6 },
-    { id: 'Q',  position: { x: 300, y: 350 }, color: 0xffffff, radius: 6 },
-    { id: 'R',  position: { x: 480, y: 420 }, color: 0xffffff, radius: 6 },
-    { id: 'S',  position: { x: 240, y: 200 }, color: 0xffffff, radius: 6 },
-    { id: 'T',  position: { x: 600, y: 200 }, color: 0xffffff, radius: 6 },
-    { id: 'U',  position: { x: 620, y: 380 }, color: 0xffffff, radius: 6 },
-    { id: 'V',  position: { x: 200, y: 380 }, color: 0xffffff, radius: 6 },
-    { id: 'W',  position: { x: 460, y: 320 }, color: 0xffffff, radius: 6 },
-    { id: 'X',  position: { x: 340, y: 440 }, color: 0xffffff, radius: 6 },
-
-    // Near-hull points (just inside the boundary — should be eliminated)
-    { id: 'Y',  position: { x: 700, y: 160 }, color: 0xffffff, radius: 6 },
-    { id: 'Z',  position: { x: 180, y: 160 }, color: 0xffffff, radius: 6 },
-  ];
+  function syncEditorFromSelectedSet(includePoints: boolean = true) {
+    const pointSet = getPointSet(selectedPointSetId);
+    editSetId = pointSet.id;
+    editSetLabel = pointSet.label;
+    if (includePoints) {
+      newSetPointsJson = serializePointsForEditor(pointSet);
+    }
+  }
 
   function runAlgorithm() {
     const algo = algorithms.find(a => a.id === selectedAlgo)!;
-    algorithmStates = algo.run(testPoints);
+    const pointSet = getPointSet(selectedPointSetId);
+    algorithmStates = algo.run(pointSet.points);
     currentStep = 0;
     if (ready) renderer.render(algorithmStates[0]);
   }
 
+  function getCanvasPosition(event: PointerEvent): { x: number; y: number } | null {
+    if (!app) return null;
+    const rect = canvasElement.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+
+    const x = ((event.clientX - rect.left) / rect.width) * app.screen.width;
+    const y = ((event.clientY - rect.top) / rect.height) * app.screen.height;
+
+    if (x < 0 || y < 0 || x > app.screen.width || y > app.screen.height) return null;
+    return { x, y };
+  }
+
+  function saveCurrentSetPoints(rawPoints: Array<{ x: number; y: number }>, status: string) {
+    if (!selectedPointSet || selectedPointSet.readonly) return;
+
+    const saved = createUserPointSet({
+      id: selectedPointSet.id,
+      label: selectedPointSet.label,
+      rawPoints
+    });
+
+    refreshPointSets();
+    selectedPointSetId = saved.id;
+    syncEditorFromSelectedSet();
+    pointSetError = '';
+    editDraftValid = true;
+    pointSetStatus = status;
+    runAlgorithm();
+  }
+
+  function persistEditorDraft(showStatus: boolean = false): boolean {
+    if (!selectedPointSet || selectedPointSet.readonly) return false;
+
+    const previousId = selectedPointSet.id;
+    const draftValidation = validatePointSetDraft({
+      previousId,
+      editSetId,
+      editSetLabel,
+      pointsJson: newSetPointsJson,
+      availablePointSets
+    });
+    if (!draftValidation.valid) {
+      pointSetError = draftValidation.error;
+      pointSetStatus = '';
+      editDraftValid = false;
+      return false;
+    }
+
+    try {
+      const created = createUserPointSet({
+        id: draftValidation.id,
+        label: draftValidation.label,
+        rawPoints: draftValidation.rawPoints
+      });
+      if (previousId !== draftValidation.id) {
+        deletePointSet(previousId);
+      }
+      refreshPointSets();
+      selectedPointSetId = created.id;
+      pointSetError = '';
+      pointSetStatus = showStatus ? `Updated "${created.label}".` : '';
+      editDraftValid = true;
+      runAlgorithm();
+      return true;
+    } catch (error) {
+      pointSetError = error instanceof Error ? error.message : 'Failed to update point set.';
+      pointSetStatus = '';
+      editDraftValid = false;
+      return false;
+    }
+  }
+
+  function handleCanvasContextMenu(event: MouseEvent) {
+    if (editMode) event.preventDefault();
+  }
+
+  function handleCanvasPointerDown(event: PointerEvent) {
+    if (!editMode || !selectedPointSet || selectedPointSet.readonly) return;
+    if (event.button !== 0 && event.button !== 2) return;
+
+    const click = getCanvasPosition(event);
+    if (!click) return;
+
+    event.preventDefault();
+
+    const currentPoints = getPointSet(selectedPointSetId).points;
+
+    const result = applyCanvasPointEdit({
+      button: event.button,
+      click,
+      currentPoints,
+      hitPadding: POINT_HIT_PADDING
+    });
+    if (!result.changed) return;
+
+    saveCurrentSetPoints(result.rawPoints, result.status);
+  }
+
   onMount(async () => {
+    refreshPointSets();
+    if (!availablePointSets.some((set) => set.id === selectedPointSetId)) {
+      selectedPointSetId = availablePointSets[0]?.id ?? DEFAULT_POINT_SET_ID;
+    }
+    syncEditorFromSelectedSet(true);
+
     app = new Application();
     await app.init({ view: canvasElement, backgroundColor: 0x111827 });
     app.renderer.resize(canvasContainer.clientWidth, canvasContainer.clientHeight);
@@ -81,11 +191,17 @@
     });
     resizeObserver.observe(canvasContainer);
     renderer = new Renderer(app);
+    canvasElement.addEventListener('pointerdown', handleCanvasPointerDown);
+    canvasElement.addEventListener('contextmenu', handleCanvasContextMenu);
     ready = true;
     runAlgorithm();
   });
 
-  onDestroy(() => resizeObserver?.disconnect());
+  onDestroy(() => {
+    resizeObserver?.disconnect();
+    canvasElement?.removeEventListener('pointerdown', handleCanvasPointerDown);
+    canvasElement?.removeEventListener('contextmenu', handleCanvasContextMenu);
+  });
 
   function handleStepChange(e: CustomEvent<number>) {
     currentStep = e.detail;
@@ -99,9 +215,94 @@
   function handleSettingChange() {
     runAlgorithm();
   }
+
+  function handlePointSetChange() {
+    pointSetError = '';
+    pointSetStatus = '';
+    editMode = false;
+    editDraftValid = null;
+    syncEditorFromSelectedSet(true);
+    runAlgorithm();
+  }
+
+  function handleCreateBlankPointSet() {
+    pointSetError = '';
+    pointSetStatus = '';
+
+    const nextSetNumber = nextGeneratedSetNumber(availablePointSets);
+    const generatedId = `set-${nextSetNumber}`;
+    const generatedLabel = `Custom set ${nextSetNumber}`;
+    const generatedPoints = generateRegularPolygonPoints(nextSetNumber);
+
+    try {
+      const created = createUserPointSet({
+        id: generatedId,
+        label: generatedLabel,
+        rawPoints: generatedPoints
+      });
+      refreshPointSets();
+      selectedPointSetId = created.id;
+      editMode = false;
+      editDraftValid = null;
+      syncEditorFromSelectedSet(true);
+      pointSetStatus = `Created "${created.label}".`;
+      runAlgorithm();
+    } catch (error) {
+      pointSetError = error instanceof Error ? error.message : 'Failed to create point set.';
+    }
+  }
+
+  function handleToggleEditMode() {
+    pointSetError = '';
+    pointSetStatus = '';
+
+    if (!selectedPointSet) return;
+    if (selectedPointSet.readonly) {
+      pointSetError = 'Default set is read-only. Create a new set to edit.';
+      editDraftValid = null;
+      return;
+    }
+
+    editMode = !editMode;
+    if (!editMode) {
+      syncEditorFromSelectedSet(true);
+      editDraftValid = null;
+    } else {
+      syncEditorFromSelectedSet(true);
+      editDraftValid = true;
+    }
+    runAlgorithm();
+  }
+
+  function handleEditorInput() {
+    if (!editMode || !selectedPointSet || selectedPointSet.readonly) return;
+    persistEditorDraft();
+  }
+
+  function handleDeletePointSet() {
+    pointSetError = '';
+    pointSetStatus = '';
+
+    const target = selectedPointSet;
+    if (!target || target.readonly) return;
+
+    const deleted = deletePointSet(target.id);
+    if (!deleted) {
+      pointSetError = 'Could not delete this point set.';
+      return;
+    }
+
+    refreshPointSets();
+    selectedPointSetId = availablePointSets[availablePointSets.length - 1]?.id ?? DEFAULT_POINT_SET_ID;
+    editMode = false;
+    editDraftValid = null;
+    syncEditorFromSelectedSet(true);
+    pointSetStatus = `Deleted "${target.label}".`;
+    runAlgorithm();
+  }
 </script>
 
-<div class="flex h-screen w-screen overflow-hidden bg-gray-950">
+<div class="relative flex h-screen w-screen overflow-hidden bg-gray-950">
   <!-- Sidebar -->
   <div class="flex-none flex flex-col h-full w-72">
 
@@ -154,6 +355,7 @@
       <ControlBar
         states={algorithmStates}
         bind:currentStep={currentStep}
+        disabled={editMode}
         on:stepChange={handleStepChange}
       />
     </div>
@@ -163,4 +365,24 @@
   <div class="flex-1" bind:this={canvasContainer}>
     <canvas bind:this={canvasElement} class="h-full w-full cursor-crosshair"></canvas>
   </div>
+
+  <PointSetPanel
+    bind:collapsed={pointPanelCollapsed}
+    {availablePointSets}
+    bind:selectedPointSetId
+    {selectedPointSet}
+    {editMode}
+    bind:editSetId
+    bind:editSetLabel
+    bind:newSetPointsJson
+    {editDraftValid}
+    {pointSetError}
+    {pointSetStatus}
+    on:toggleCollapsed={() => (pointPanelCollapsed = !pointPanelCollapsed)}
+    on:pointSetChange={handlePointSetChange}
+    on:createBlankPointSet={handleCreateBlankPointSet}
+    on:toggleEditMode={handleToggleEditMode}
+    on:deletePointSet={handleDeletePointSet}
+    on:editorInput={handleEditorInput}
+  />
 </div>

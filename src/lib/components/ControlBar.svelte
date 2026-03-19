@@ -4,6 +4,7 @@
 
   export let states: AlgorithmState[] = [];
   export let currentStep = 0; // Export for control bar
+  export let disabled = false;
 
   const dispatch = createEventDispatcher();
 
@@ -19,6 +20,9 @@
   $: progress = states.length > 1 ? (currentStep / (states.length - 1)) * 100 : 0;
   $: atStart = currentStep === 0;
   $: atEnd = currentStep === states.length - 1;
+  $: if (disabled) {
+    pause();
+  }
 
   function clearTimer() {
     if (intervalId !== null) {
@@ -86,7 +90,14 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
-    if (e.target instanceof HTMLInputElement) return;
+    if (disabled) return;
+    if (
+      e.target instanceof HTMLInputElement ||
+      e.target instanceof HTMLTextAreaElement ||
+      (e.target instanceof HTMLElement && e.target.isContentEditable)
+    ) {
+      return;
+    }
     if (e.key === 'ArrowRight') { e.preventDefault(); nextStep(); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); prevStep(); }
     else if (e.key === ' ')    { e.preventDefault(); togglePlay(); }
@@ -130,7 +141,7 @@
       max={Math.max(states.length - 1, 0)}
       value={currentStep}
       on:input={onScrub}
-      disabled={states.length === 0}
+      disabled={states.length === 0 || disabled}
       class="w-full accent-blue-500 cursor-pointer disabled:opacity-40"
     />
   </div>
@@ -140,35 +151,35 @@
     <button
       class="flex-1 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 active:bg-gray-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
       on:click={reset}
-      disabled={atStart || states.length === 0}
+      disabled={atStart || states.length === 0 || disabled}
       title="Reset (R)"
     >⏮</button>
 
     <button
       class="flex-1 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 active:bg-gray-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
       on:click={prevStep}
-      disabled={atStart || states.length === 0}
+      disabled={atStart || states.length === 0 || disabled}
       title="Previous (←)"
     >◀</button>
 
     <button
       class="w-12 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-base font-bold"
       on:click={togglePlay}
-      disabled={states.length === 0 || atEnd}
+      disabled={states.length === 0 || atEnd || disabled}
       title={playing ? 'Pause (Space)' : 'Play (Space)'}
     >{playing ? '⏸' : '▶'}</button>
 
     <button
       class="flex-1 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 active:bg-gray-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
       on:click={nextStep}
-      disabled={atEnd || states.length === 0}
+      disabled={atEnd || states.length === 0 || disabled}
       title="Next (→)"
     >▶|</button>
 
     <button
       class="flex-1 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 active:bg-gray-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-sm"
       on:click={goToEnd}
-      disabled={atEnd || states.length === 0}
+      disabled={atEnd || states.length === 0 || disabled}
       title="Jump to end"
     >⏭</button>
   </div>
@@ -183,6 +194,7 @@
       type="range" min="100" max="2000" step="100"
       bind:value={speed}
       on:change={onSpeedChange}
+      disabled={disabled}
       class="w-full accent-blue-500"
     />
     <div class="flex justify-between text-xs text-gray-600">
