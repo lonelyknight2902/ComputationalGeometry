@@ -3,11 +3,14 @@
   import type { AlgorithmState } from '$lib/types';
 
   export let states: AlgorithmState[] = [];
-  export let initialStep = 0;
+  export let currentStep = 0; // Export for control bar
 
   const dispatch = createEventDispatcher();
 
-  let currentStep = initialStep;
+  // Automatically pause if a new algorithm/setting is loaded
+  $: if (states) {
+    pause();
+  }
   let playing = false;
   let intervalId: ReturnType<typeof setInterval> | null = null;
   let speed = 500;

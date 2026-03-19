@@ -6,6 +6,7 @@
   import ControlBar from './ControlBar.svelte';
   import { chansConvexHull } from '$lib/algorithms/convex-hull/chansConvexHull';
   import { grahamScanVisualizer } from '$lib/algorithms/convex-hull/grahamScan';
+	import { pushState } from '$app/navigation';
 
   let canvasElement: HTMLCanvasElement;
   let canvasContainer: HTMLDivElement;
@@ -17,12 +18,14 @@
   let ready = false;
 
   const algorithms = [
-    { id: 'chan',    label: "Chan's Convex Hull", run: chansConvexHull },
+    { id: 'chan',    label: "Chan's Convex Hull", run: (pts: Point[]) => chansConvexHull(pts, useBinarySearch, skipSearchVisuals) },
     { id: 'graham', label: 'Graham Scan',         run: grahamScanVisualizer },
   ] as const;
 
   type AlgoId = typeof algorithms[number]['id'];
   let selectedAlgo: AlgoId = 'chan';
+  let useBinarySearch = true;
+  let skipSearchVisuals = true;
 
   const testPoints: Point[] = [
     // Outer hull vertices (roughly octagonal)
@@ -92,6 +95,10 @@
   function handleAlgoChange() {
     runAlgorithm();
   }
+
+  function handleSettingChange() {
+    runAlgorithm();
+  }
 </script>
 
 <div class="flex h-screen w-screen overflow-hidden bg-gray-950">
@@ -116,10 +123,37 @@
       </select>
     </div>
 
+    {#if selectedAlgo === 'chan'}
+      <div class="p-3 bg-gray-900 border-b border-gray-800 flex-none space-y-2 text-gray-300">
+        <label class="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-1.5">
+          Options
+        </label>
+        <label class="flex items-center gap-2 text-sm cursor-pointer hover:text-white transition-colors">
+          <input
+            type="checkbox"
+            bind:checked={useBinarySearch}
+            on:change={handleSettingChange}
+            class="w-4 h-4 accent-blue-500 cursor-pointer rounded border-gray-700 bg-gray-800"
+          />
+          Use Binary Search
+        </label>
+        <label class="flex items-center gap-2 text-sm cursor-pointer hover:text-white transition-colors">
+          <input
+            type="checkbox"
+            bind:checked={skipSearchVisuals}
+            on:change={handleSettingChange}
+            class="w-4 h-4 accent-blue-500 cursor-pointer rounded border-gray-700 bg-gray-800"
+          />
+          Skip Search Visuals
+        </label>
+      </div>
+    {/if}
+
     <!-- Control bar fills remaining height -->
     <div class="flex-1 min-h-0">
       <ControlBar
         states={algorithmStates}
+        bind:currentStep={currentStep}
         on:stepChange={handleStepChange}
       />
     </div>
