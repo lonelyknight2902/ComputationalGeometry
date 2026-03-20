@@ -34,7 +34,7 @@
   let ready = false;
 
   const algorithms = [
-    { id: 'chan',    label: "Chan's Convex Hull", run: (pts: Point[]) => chansConvexHull(pts, useBinarySearch, skipSearchVisuals) },
+    { id: 'chan',    label: "Chan's Convex Hull", run: (pts: Point[]) => chansConvexHull(pts, skipGramhamScanVisuals, useBinarySearch, skipSearchVisuals) },
     { id: 'graham', label: 'Graham Scan',         run: grahamScanVisualizer },
   ] as const;
 
@@ -42,6 +42,7 @@
   let selectedAlgo: AlgoId = 'chan';
   let availablePointSets: PointSet[] = listPointSets();
   let selectedPointSetId = DEFAULT_POINT_SET_ID;
+  let skipGramhamScanVisuals = true;
   let useBinarySearch = true;
   let skipSearchVisuals = true;
   let pointPanelCollapsed = false;
@@ -328,6 +329,15 @@
       <div class="p-3 bg-gray-900 border-b border-gray-800 flex-none space-y-2 text-gray-300">
         <label class="block text-xs font-semibold uppercase tracking-widest text-gray-500 mb-1.5">
           Options
+        </label>
+        <label class="flex items-center gap-2 text-sm cursor-pointer hover:text-white transition-colors">
+          <input
+            type="checkbox"
+            bind:checked={skipGramhamScanVisuals}
+            on:change={handleSettingChange}
+            class="w-4 h-4 accent-blue-500 cursor-pointer rounded border-gray-700 bg-gray-800"
+          />
+          Skip Graham Scan Visuals
         </label>
         <label class="flex items-center gap-2 text-sm cursor-pointer hover:text-white transition-colors">
           <input
