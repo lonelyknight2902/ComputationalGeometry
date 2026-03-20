@@ -656,7 +656,7 @@ export function chansConvexHull(inputPoints: Point[], useBinarySearch: boolean, 
    
     function getBinarySearchPath(current: Point, miniHull: Point[]): Point[] {
 		const n = miniHull.length;
-		if (n <= 3) return miniHull;
+		if (n === 1) return [miniHull[0]];
 
 		const path: Point[] = [];
 		const p = current.position;
