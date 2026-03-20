@@ -195,7 +195,12 @@ function grahamScanGroup(pts: Point[]): Point[] {
 
 // ─── Chan's convex hull ───────────────────────────────────────────────────────
 
-export function chansConvexHull(inputPoints: Point[], useBinarySearch: boolean, skipSearchVisuals: boolean = false): AlgorithmState[] {
+export function chansConvexHull(
+	inputPoints: Point[],
+	skipGrahamScanVisuals: boolean,
+	useBinarySearch: boolean,
+	skipSearchVisuals: boolean = false
+): AlgorithmState[] {
 	const states: AlgorithmState[] = [];
 	const n = inputPoints.length;
 
@@ -240,7 +245,7 @@ export function chansConvexHull(inputPoints: Point[], useBinarySearch: boolean, 
 	states.push({
 		points: defaultPoints,
 		description:
-			section('Chan\'s Convex Hull', `Running on ${mono(String(n))} points.`) +
+			section("Chan's Convex Hull", `Running on ${mono(String(n))} points.`) +
 			section(
 				'Strategy',
 				`<ol style="margin:0;padding-left:1.2em;line-height:1.8">` +
@@ -249,7 +254,10 @@ export function chansConvexHull(inputPoints: Point[], useBinarySearch: boolean, 
 					`<li>Merge mini-hulls via Jarvis March on hull vertices only.</li>` +
 					`</ol>`
 			) +
-			section('Complexity', row('Time', 'O(n log h)') + row('Advantage', 'Output-sensitive: h = hull size'))
+			section(
+				'Complexity',
+				row('Time', 'O(n log h)') + row('Advantage', 'Output-sensitive: h = hull size')
+			)
 	});
 
 	// ── Partition into k groups ───────────────────────────────────────────────
@@ -282,10 +290,7 @@ export function chansConvexHull(inputPoints: Point[], useBinarySearch: boolean, 
 			section(
 				'Group sizes',
 				groups
-					.map(
-						(g, gi) =>
-							`${chip(`G${gi + 1}`, groupCss(gi))}: ${mono(String(g.length))} points`
-					)
+					.map((g, gi) => `${chip(`G${gi + 1}`, groupCss(gi))}: ${mono(String(g.length))} points`)
 					.join(' | ')
 			) +
 			section(
@@ -297,44 +302,49 @@ export function chansConvexHull(inputPoints: Point[], useBinarySearch: boolean, 
 	// ── Build mini-hulls for each group via Graham Scan ────────────────────────
 	const miniHulls: Point[][] = [];
 
-	for (let gi = 0; gi < groups.length; gi++) {
-		const group = groups[gi];
-		const miniHull = grahamScanGroup(group);
-		miniHulls.push(miniHull);
+	if (skipGrahamScanVisuals) {
+		// If skipping visuals, compute all mini-hulls first before pushing any states
+		for (const group of groups) {
+			const miniHull = grahamScanGroup(group);
+			miniHulls.push(miniHull);
+		}
+	} else {
+		for (let gi = 0; gi < groups.length; gi++) {
+			const group = groups[gi];
+			const miniHull = grahamScanGroup(group);
+			miniHulls.push(miniHull);
 
-		const overrides = groupOverrides(groups, miniHulls);
-		states.push({
-			points: colorPoints(defaultPoints, overrides),
-			lines: miniHull.map((p, i) => ({
-				id: `group-${gi}-edge-${i}`,
-				from: p.position,
-				to: miniHull[(i + 1) % miniHull.length].position,
-				color: groupColor(gi),
-				width: 2
-			})),
-			description:
-				section(
-					`Step 2 — Graham Scan: Group ${chip(`G${gi + 1}`, groupCss(gi))}`,
-					`Mini-hull computed (${mono(String(miniHull.length))} vertices from ${mono(String(group.length))} points).`
-				) +
-				section(
-					'Hull vertices',
-					miniHull.map((p) => badge(p.id, groupCss(gi), '#000')).join(' → ')
-				) +
-				section(
-					'Progress',
-					row('Completed', `${gi + 1} / ${k}`) +
-						row('Total mini-hulls', `${miniHulls.length}`)
-				)
-		});
+			const overrides = groupOverrides(groups, miniHulls);
+			states.push({
+				points: colorPoints(defaultPoints, overrides),
+				lines: miniHull.map((p, i) => ({
+					id: `group-${gi}-edge-${i}`,
+					from: p.position,
+					to: miniHull[(i + 1) % miniHull.length].position,
+					color: groupColor(gi),
+					width: 2
+				})),
+				description:
+					section(
+						`Step 2 — Graham Scan: Group ${chip(`G${gi + 1}`, groupCss(gi))}`,
+						`Mini-hull computed (${mono(String(miniHull.length))} vertices from ${mono(String(group.length))} points).`
+					) +
+					section(
+						'Hull vertices',
+						miniHull.map((p) => badge(p.id, groupCss(gi), '#000')).join(' → ')
+					) +
+					section(
+						'Progress',
+						row('Completed', `${gi + 1} / ${k}`) + row('Total mini-hulls', `${miniHulls.length}`)
+					)
+			});
+		}
 	}
 
 	// ── Jarvis March (gift wrapping) on mini-hull vertices ───────────────────
 
 	// Find leftmost point among all mini-hull vertices (anchor for wrapping)
-	const leftmost = miniHulls
-		.flat()
-		.reduce((a, b) => (b.position.x < a.position.x ? b : a));
+	const leftmost = miniHulls.flat().reduce((a, b) => (b.position.x < a.position.x ? b : a));
 
 	const finalHull: Point[] = [leftmost];
 
@@ -383,41 +393,44 @@ export function chansConvexHull(inputPoints: Point[], useBinarySearch: boolean, 
 
 		// Show each candidate being tested
 		for (const miniHull of miniHulls) {
-            
-            // 1. Determine the path of candidates to check
-            let candidatesToCheck: Point[] = [];
+			// 1. Determine the path of candidates to check
+			let candidatesToCheck: Point[] = [];
 
-            const currentIdxInHull = miniHull.findIndex((p) => p.id === current.id);
+			const currentIdxInHull = miniHull.findIndex((p) => p.id === current.id);
 
-            if (currentIdxInHull !== -1) {
-                // O(1) Same-hull shortcut (Going backwards: i - 1)
-                candidatesToCheck = [miniHull[(currentIdxInHull - 1 + miniHull.length) % miniHull.length]];
-            } else if (useBinarySearch) {
-                // O(log k) Binary search path (yields the few probed points)
-                candidatesToCheck = getBinarySearchPath(current, miniHull);
-                
-                // If skipping visuals, just grab the final tangent from the path
-                if (skipSearchVisuals && candidatesToCheck.length > 0) {
-                    candidatesToCheck = [candidatesToCheck[candidatesToCheck.length - 1]];
-                }
-            } else {
-                // O(k) Linear scan (yields all points)
-                candidatesToCheck = miniHull;
-                
-                // If skipping visuals, we must mathematically find the best point first
-                // because the last element of miniHull is just an arbitrary point, not the tangent!
-                if (skipSearchVisuals) {
-                    let best = candidatesToCheck[0];
-                    for (let i = 1; i < candidatesToCheck.length; i++) {
-                        const p = candidatesToCheck[i];
-                        const o = cross(current.position, best.position, p.position);
-                        if (o > 0 || (o === 0 && dist2(current.position, p.position) > dist2(current.position, best.position))) {
-                            best = p;
-                        }
-                    }
-                    candidatesToCheck = [best];
-                }
-            }
+			if (currentIdxInHull !== -1) {
+				// O(1) Same-hull shortcut (Going backwards: i - 1)
+				candidatesToCheck = [miniHull[(currentIdxInHull - 1 + miniHull.length) % miniHull.length]];
+			} else if (useBinarySearch) {
+				// O(log k) Binary search path (yields the few probed points)
+				candidatesToCheck = getBinarySearchPath(current, miniHull);
+
+				// If skipping visuals, just grab the final tangent from the path
+				if (skipSearchVisuals && candidatesToCheck.length > 0) {
+					candidatesToCheck = [candidatesToCheck[candidatesToCheck.length - 1]];
+				}
+			} else {
+				// O(k) Linear scan (yields all points)
+				candidatesToCheck = miniHull;
+
+				// If skipping visuals, we must mathematically find the best point first
+				// because the last element of miniHull is just an arbitrary point, not the tangent!
+				if (skipSearchVisuals) {
+					let best = candidatesToCheck[0];
+					for (let i = 1; i < candidatesToCheck.length; i++) {
+						const p = candidatesToCheck[i];
+						const o = cross(current.position, best.position, p.position);
+						if (
+							o > 0 ||
+							(o === 0 &&
+								dist2(current.position, p.position) > dist2(current.position, best.position))
+						) {
+							best = p;
+						}
+					}
+					candidatesToCheck = [best];
+				}
+			}
 			for (const candidate of candidatesToCheck) {
 				if (candidate.id === current.id) continue;
 
@@ -514,7 +527,9 @@ export function chansConvexHull(inputPoints: Point[], useBinarySearch: boolean, 
 						) +
 						section(
 							'Current best',
-							nextPoint ? badge(nextPoint.id, CSS.hullVertex) : '<span style="color:#475569">none</span>'
+							nextPoint
+								? badge(nextPoint.id, CSS.hullVertex)
+								: '<span style="color:#475569">none</span>'
 						)
 				});
 
@@ -627,7 +642,7 @@ export function chansConvexHull(inputPoints: Point[], useBinarySearch: boolean, 
 		],
 		description:
 			section(
-				'✅ Chan\'s Algorithm Complete',
+				"✅ Chan's Algorithm Complete",
 				`${k} mini-hulls merged via Jarvis March on ${miniHulls.flat().length} vertices.`
 			) +
 			section(
@@ -648,149 +663,143 @@ export function chansConvexHull(inputPoints: Point[], useBinarySearch: boolean, 
 	return states;
 }
 
+/**
+ * Returns the sequence of points tested during the binary search.
+ * The last point in the returned array is the final tangent.
+ */
 
-    /**
-     * Returns the sequence of points tested during the binary search.
-     * The last point in the returned array is the final tangent.
-     */    
-   
-    function getBinarySearchPath(current: Point, miniHull: Point[]): Point[] {
-		const n = miniHull.length;
-		if (n === 1) return [miniHull[0]];
+function getBinarySearchPath(current: Point, miniHull: Point[]): Point[] {
+	const n = miniHull.length;
+	if (n === 1) return [miniHull[0]];
 
-		const path: Point[] = [];
-		const p = current.position;
+	const path: Point[] = [];
+	const p = current.position;
 
-		// 'geq' and 'leq' with epsilon for stability
-		const EPS = 1e-9;
-		const geq = (val: number, limit: number) => val >= limit - EPS;
-		const leq = (val: number, limit: number) => val <= limit + EPS;
+	// 'geq' and 'leq' with epsilon for stability
+	const EPS = 1e-9;
+	const geq = (val: number, limit: number) => val >= limit - EPS;
+	const leq = (val: number, limit: number) => val <= limit + EPS;
 
-		// --- 1. Split into Lower (Ps[0]) and Upper (Ps[1]) Layers ---
-		// Graham Scan usually puts leftmost at index 0. We find rightmost to split.
-		let mIdx = 0;
-		for (let i = 1; i < n; i++) {
-			if (miniHull[i].position.x > miniHull[mIdx].position.x) mIdx = i;
-		}
+	// --- 1. Split into Lower (Ps[0]) and Upper (Ps[1]) Layers ---
+	// Graham Scan usually puts leftmost at index 0. We find rightmost to split.
+	let mIdx = 0;
+	for (let i = 1; i < n; i++) {
+		if (miniHull[i].position.x > miniHull[mIdx].position.x) mIdx = i;
+	}
 
-		const lowerLayer = miniHull.slice(0, mIdx + 1); // Left to Right
-		const upperLayer = miniHull.slice(mIdx, n).concat([miniHull[0]]); // Right to Left
-		const layers = [lowerLayer, upperLayer];
+	const lowerLayer = miniHull.slice(0, mIdx + 1); // Left to Right
+	const upperLayer = miniHull.slice(mIdx, n).concat([miniHull[0]]); // Right to Left
+	const layers = [lowerLayer, upperLayer];
 
-		// lk is the offset used to map layer indices back to the original P array
-		const offset = mIdx; 
-		
-		// 'tang' finds the local extrema based on weight 'w'
-		const tang = (l: number, r: number, w: number, layer: Point[], layerOffset: number): number => {
-			let res = l;
-			const low = l;
-			const high = r;
+	// lk is the offset used to map layer indices back to the original P array
+	const offset = mIdx;
 
-			while (l <= r) {
-				const m = Math.floor((l + r) / 2);
-				const globalIdx = (m + layerOffset) % n;
-				
-				// Record visualization path
-				if (path.length === 0 || path[path.length - 1].id !== miniHull[globalIdx].id) {
-					path.push(miniHull[globalIdx]);
-				}
+	// 'tang' finds the local extrema based on weight 'w'
+	const tang = (l: number, r: number, w: number, layer: Point[], layerOffset: number): number => {
+		let res = l;
+		const low = l;
+		const high = r;
 
-				const curr = miniHull[globalIdx].position;
-				const next = miniHull[(globalIdx + 1) % n].position;
-				const prev = miniHull[(globalIdx - 1 + n) % n].position;
+		while (l <= r) {
+			const m = Math.floor((l + r) / 2);
+			const globalIdx = (m + layerOffset) % n;
 
-				const a = cross(p, curr, next) * w;
-				const b = cross(p, curr, prev) * w;
-
-				if (geq(a, 0) && geq(b, 0)) return m;
-				if (geq(a, 0)) {
-					r = m - 1;
-					res = m;
-				} else {
-					l = m + 1;
-				}
+			// Record visualization path
+			if (path.length === 0 || path[path.length - 1].id !== miniHull[globalIdx].id) {
+				path.push(miniHull[globalIdx]);
 			}
-			return res;
-		};
 
-		// 'bs' splits a layer into points left of p.x and right of p.x
-		const bs = (layer: Point[], w: number): number => {
-			let l = 0, r = layer.length - 1;
-			let res = 0;
-			const targetX = p.x * w;
-			while (l <= r) {
-				const m = Math.floor((l + r) / 2);
-				if (layer[m].position.x * w >= targetX - EPS) {
-					r = m - 1;
-				} else {
-					res = m;
-					l = m + 1;
-				}
+			const curr = miniHull[globalIdx].position;
+			const next = miniHull[(globalIdx + 1) % n].position;
+			const prev = miniHull[(globalIdx - 1 + n) % n].position;
+
+			const a = cross(p, curr, next) * w;
+			const b = cross(p, curr, prev) * w;
+
+			if (geq(a, 0) && geq(b, 0)) return m;
+			if (geq(a, 0)) {
+				r = m - 1;
+				res = m;
+			} else {
+				l = m + 1;
 			}
-			return res;
-		};
-		
-		// Split points in layers based on p.x
-		const t1 = bs(layers[0], 1);
-		const t2 = bs(layers[1], -1);
-
-		// For Jarvis/Chan, we primarily need the Right Tangent (u1, u2)
-
-		const u1 = tang(0, t1, -1, layers[0], 0);
-		const u2 = tang(0, t2, -1, layers[1], offset);
-
-		let left: Point = miniHull[u1]; // start with u1
-
-		// Validate u1
-		let idx = u1;
-		let curr = miniHull[idx].position;
-		let prev = miniHull[(idx - 1 + n) % n].position;
-		let next = miniHull[(idx + 1) % n].position;
-
-		if (
-			leq(cross(p, curr, prev), 0) &&
-			leq(cross(p, curr, next), 0)
-		) {
-			left = miniHull[idx];
 		}
+		return res;
+	};
 
-		// Validate u2
-		idx = (u2 + offset) % n;
-		curr = miniHull[idx].position;
-		prev = miniHull[(idx - 1 + n) % n].position;
-		next = miniHull[(idx + 1) % n].position;
-
-		if (
-			leq(cross(p, curr, prev), 0) &&
-			leq(cross(p, curr, next), 0)
-		) {
-			left = miniHull[idx];
+	// 'bs' splits a layer into points left of p.x and right of p.x
+	const bs = (layer: Point[], w: number): number => {
+		let l = 0,
+			r = layer.length - 1;
+		let res = 0;
+		const targetX = p.x * w;
+		while (l <= r) {
+			const m = Math.floor((l + r) / 2);
+			if (layer[m].position.x * w >= targetX - EPS) {
+				r = m - 1;
+			} else {
+				res = m;
+				l = m + 1;
+			}
 		}
+		return res;
+	};
 
-		// The binary search might land on the closer of two collinear tangent points.
-        // Because the hull is strictly convex, we only need to check its immediate neighbors.
-        let finalTangent = left;
-        const leftIdx = miniHull.findIndex(pt => pt.id === left.id);
-        const nextPt = miniHull[(leftIdx + 1) % n];
-        const prevPt = miniHull[(leftIdx - 1 + n) % n];
+	// Split points in layers based on p.x
+	const t1 = bs(layers[0], 1);
+	const t2 = bs(layers[1], -1);
 
-        // Check if the next point is collinear and further away
-        if (Math.abs(cross(p, finalTangent.position, nextPt.position)) <= EPS) {
-            if (dist2(p, nextPt.position) > dist2(p, finalTangent.position)) {
-                finalTangent = nextPt;
-            }
-        } 
-        // Check if the prev point is collinear and further away
-        else if (Math.abs(cross(p, finalTangent.position, prevPt.position)) <= EPS) {
-            if (dist2(p, prevPt.position) > dist2(p, finalTangent.position)) {
-                finalTangent = prevPt;
-            }
-        }
+	// For Jarvis/Chan, we primarily need the Right Tangent (u1, u2)
 
-        // Push the confirmed furthest tangent to the path
-        if (path.length === 0 || path[path.length - 1].id !== finalTangent.id) {
-            path.push(finalTangent);
-        }
+	const u1 = tang(0, t1, -1, layers[0], 0);
+	const u2 = tang(0, t2, -1, layers[1], offset);
 
-        return path;
-    }
+	let left: Point = miniHull[u1]; // start with u1
+
+	// Validate u1
+	let idx = u1;
+	let curr = miniHull[idx].position;
+	let prev = miniHull[(idx - 1 + n) % n].position;
+	let next = miniHull[(idx + 1) % n].position;
+
+	if (leq(cross(p, curr, prev), 0) && leq(cross(p, curr, next), 0)) {
+		left = miniHull[idx];
+	}
+
+	// Validate u2
+	idx = (u2 + offset) % n;
+	curr = miniHull[idx].position;
+	prev = miniHull[(idx - 1 + n) % n].position;
+	next = miniHull[(idx + 1) % n].position;
+
+	if (leq(cross(p, curr, prev), 0) && leq(cross(p, curr, next), 0)) {
+		left = miniHull[idx];
+	}
+
+	// The binary search might land on the closer of two collinear tangent points.
+	// Because the hull is strictly convex, we only need to check its immediate neighbors.
+	let finalTangent = left;
+	const leftIdx = miniHull.findIndex((pt) => pt.id === left.id);
+	const nextPt = miniHull[(leftIdx + 1) % n];
+	const prevPt = miniHull[(leftIdx - 1 + n) % n];
+
+	// Check if the next point is collinear and further away
+	if (Math.abs(cross(p, finalTangent.position, nextPt.position)) <= EPS) {
+		if (dist2(p, nextPt.position) > dist2(p, finalTangent.position)) {
+			finalTangent = nextPt;
+		}
+	}
+	// Check if the prev point is collinear and further away
+	else if (Math.abs(cross(p, finalTangent.position, prevPt.position)) <= EPS) {
+		if (dist2(p, prevPt.position) > dist2(p, finalTangent.position)) {
+			finalTangent = prevPt;
+		}
+	}
+
+	// Push the confirmed furthest tangent to the path
+	if (path.length === 0 || path[path.length - 1].id !== finalTangent.id) {
+		path.push(finalTangent);
+	}
+
+	return path;
+}
