@@ -670,10 +670,24 @@ export function chansConvexHull(
 
 function getBinarySearchPath(current: Point, miniHull: Point[]): Point[] {
 	const n = miniHull.length;
-	if (n === 1) return [miniHull[0]];
 
 	const path: Point[] = [];
 	const p = current.position;
+
+	// EARLY EXIT: O(k) linear scan for tiny hulls
+    if (n <= 3) {
+        let best = miniHull[0];
+        for (let i = 1; i < n; i++) {
+            const pTest = miniHull[i];
+            const o = cross(p, best.position, pTest.position);
+            // Find the most counter-clockwise point (or furthest if collinear)
+            if (o > 0 || (o === 0 && dist2(p, pTest.position) > dist2(p, best.position))) {
+                best = pTest;
+            }
+        }
+        // Return all points for the visualizer, but guarantee the best point is the absolute last element
+        return [...miniHull.filter(pt => pt.id !== best.id), best];
+    }
 
 	// 'geq' and 'leq' with epsilon for stability
 	const EPS = 1e-9;
